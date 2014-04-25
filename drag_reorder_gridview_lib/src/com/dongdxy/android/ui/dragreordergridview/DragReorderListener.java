@@ -29,11 +29,4 @@ public interface DragReorderListener {
 	 * reordered data.
 	 */
 	public void onDragEnded();
-
-	/**
-	 * Called when user delete an item in edit mode
-	 * 
-	 * @param position
-	 */
-	public void onDelete(int position);
 }

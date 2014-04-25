@@ -15,6 +15,7 @@ import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.animation.Animation;
 import android.view.animation.Animation.AnimationListener;
@@ -34,6 +35,10 @@ public class DragReorderGridView extends GridView {
 	private static final int HOVER_AMPLIFY_PERSENCT = 10; // 0% means no amplify
 
 	private DragReorderListener mDragReorderListener;
+
+	private boolean mEditModeEnabled = false;
+	private EditActionListener mEditActionListener;
+	private int mEditActionViewId;
 
 	private boolean mIsEditMode = false;
 	private int mEditingPosition = INVALID_POSITION;
@@ -73,20 +78,29 @@ public class DragReorderGridView extends GridView {
 		return mIsEditMode;
 	}
 
+	public void enableEditMode(int actionViewId, EditActionListener actionListener) {
+		mEditModeEnabled = true;
+		mEditActionViewId = actionViewId;
+		mEditActionListener = actionListener;
+	}
+
 	private void init() {
 		setOnItemLongClickListener(new OnItemLongClickListener() {
 
 			@Override
 			public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
-				Log.e("xxx", "onItemLongClick " + position);
+				notifyLongClicked();
+
 				if (!isReorderable(position)) {
 					return false;
 				}
 
-				quitEditMode();
-				enterEditMode(position);
+				if (mEditModeEnabled) {
+					quitEditMode();
+					enterEditMode(position);
+				}
+
 				startDrag(position);
-				notifyLongClicked();
 
 				return true;
 			}
@@ -97,18 +111,31 @@ public class DragReorderGridView extends GridView {
 		mGridViewScrollStep = (int) (GRIDVIEW_SCROLL_STEP * metrics.density + 0.5f);
 	}
 
+	private OnClickListener mEditActionOnClickListener = new OnClickListener() {
+
+		@Override
+		public void onClick(View arg0) {
+			if (mEditActionListener != null) {
+				mEditActionListener.onEditAction(mEditingPosition);
+			}
+			quitEditMode();
+		}
+	};
+
 	private void enterEditMode(int tiggerPosition) {
 		mEditingPosition = tiggerPosition;
 		mIsEditMode = true;
 	}
 
 	public void quitEditMode() {
+		stopDrag();
+
 		if (!mIsEditMode) {
 			return;
 		}
 
 		mIsEditMode = false;
-		mEditingPosition = INVALID_POSITION;
+		updateEditingPosition(INVALID_POSITION);
 		invalidate();
 	}
 
@@ -149,20 +176,15 @@ public class DragReorderGridView extends GridView {
 		// Log.e("xxx", "touchEvent " + event.getAction());
 		switch (event.getAction() & MotionEvent.ACTION_MASK) {
 		case MotionEvent.ACTION_DOWN:
-			mDownEventX = (int) event.getX();
-			mDownEventY = (int) event.getY();
-			Log.e("xxx", "ACTION_DOWN x " + mDownEventX);
-			Log.e("xxx", "ACTION_DOWN y " + mDownEventY);
-			Log.e("xxx", "mIsEditMode " + mIsEditMode);
+			mLastEventX = (int) event.getX();
+			mLastEventY = (int) event.getY();
 
 			if (!mIsEditMode) {
 				break;
 			}
+
 			layoutChildren();
 			int position = pointToPosition((int) event.getX(), (int) event.getY());
-			Log.e("xxx", "position " + position + " mEditingPosition " + mEditingPosition);
-			// Log.e("xxx", "mEditingPosition visi " +
-			// findViewByPosition(mEditingPosition).getVisibility());
 			if (position != mEditingPosition) {
 				quitEditMode();
 				break;
@@ -172,7 +194,6 @@ public class DragReorderGridView extends GridView {
 			}
 
 		case MotionEvent.ACTION_MOVE:
-
 			if (!mIsDragging) {
 				break;
 			}
@@ -201,8 +222,20 @@ public class DragReorderGridView extends GridView {
 		return super.onTouchEvent(event);
 	}
 
-	private int mDownEventX = -1;
-	private int mDownEventY = -1;
+	@Override
+	protected void onLayout(boolean changed, int l, int t, int r, int b) {
+		super.onLayout(changed, l, t, r, b);
+		if (mIsDragging) {
+			for (int i = 0; i < getCount(); i++) {
+				setCellDragging(i, i == mDraggingPosition);
+			}
+		}
+		if (mIsEditMode) {
+			for (int i = 0; i < getCount(); i++) {
+				setCellEditing(i, i == mEditingPosition);
+			}
+		}
+	}
 
 	private int mLastEventY = -1;
 	private int mLastEventX = -1;
@@ -211,33 +244,6 @@ public class DragReorderGridView extends GridView {
 		mHoverViewBounds.offsetTo(x + mHoverViewOffsetX, y + mHoverViewOffsetY);
 		mHoverView.setBounds(mHoverViewBounds);
 		invalidate();
-	}
-
-	private boolean mIsMobileScrolling = false;
-
-	private void handleScroll() {
-		mIsMobileScrolling = handleScroll(mHoverViewBounds);
-	}
-
-	private boolean handleScroll(Rect r) {
-		int offset = computeVerticalScrollOffset();
-		int height = getHeight();
-		int extent = computeVerticalScrollExtent();
-		int range = computeVerticalScrollRange();
-		int hoverViewTop = r.top;
-		int hoverHeight = r.height();
-
-		if (hoverViewTop <= 0 && offset > 0) {
-			smoothScrollBy(-mGridViewScrollStep, 0);
-			return true;
-		}
-
-		if (hoverViewTop + hoverHeight >= height && (offset + extent) < range) {
-			smoothScrollBy(mGridViewScrollStep, 0);
-			return true;
-		}
-
-		return false;
 	}
 
 	private boolean isReorderable(int position) {
@@ -256,7 +262,9 @@ public class DragReorderGridView extends GridView {
 			return null;
 		}
 
-		return this.getChildAt(position - firstPosition);
+		View v = this.getChildAt(position - firstPosition);
+
+		return v;
 	}
 
 	/**
@@ -278,8 +286,8 @@ public class DragReorderGridView extends GridView {
 
 		mHoverViewBounds = new Rect(left - wAmplified, top - hAmplified, left + w + wAmplified, top + h + hAmplified);
 
-		mHoverViewOffsetX = mHoverViewBounds.left - mDownEventX;
-		mHoverViewOffsetY = mHoverViewBounds.top - mDownEventY;
+		mHoverViewOffsetX = mHoverViewBounds.left - mLastEventX;
+		mHoverViewOffsetY = mHoverViewBounds.top - mLastEventY;
 
 		mHoverView.setBounds(mHoverViewBounds);
 	}
@@ -315,13 +323,6 @@ public class DragReorderGridView extends GridView {
 		mDragReorderListener.onItemLongClicked();
 	}
 
-	private void onDeletePressed(int position) {
-		if (mDragReorderListener == null) {
-			return;
-		}
-		mDragReorderListener.onDelete(position);
-	}
-
 	private void attemptReorder() {
 		int x = mLastEventX;
 		int y = mLastEventY;
@@ -337,7 +338,6 @@ public class DragReorderGridView extends GridView {
 
 		final int origPosition = mDraggingPosition;
 		notifyReorder(origPosition, targetPosition);
-		Log.e("xxx", "reorderElements originalPosition " + mDraggingPosition + " targetPosition" + targetPosition);
 		updateDraggingPosition(targetPosition);
 		updateEditingPosition(targetPosition);
 		final ViewTreeObserver observer = getViewTreeObserver();
@@ -355,7 +355,6 @@ public class DragReorderGridView extends GridView {
 	}
 
 	private void animationReorder(int oldPosition, int newPosition) {
-
 		boolean isForward = newPosition > oldPosition;
 		int fromX;
 		int toX;
@@ -381,7 +380,6 @@ public class DragReorderGridView extends GridView {
 				}
 				TranslateAnimation translate = new TranslateAnimation(Animation.ABSOLUTE, fromX, Animation.ABSOLUTE,
 						toX, Animation.ABSOLUTE, fromY, Animation.ABSOLUTE, toY);
-				Log.e("xxx", "traslate fromX " + fromX + " toX " + toX + " fromY " + fromY + " toY " + toY);
 				translate.setDuration(ANIMATION_DURATION);
 				translate.setFillEnabled(true);
 				translate.setFillAfter(false);
@@ -414,7 +412,6 @@ public class DragReorderGridView extends GridView {
 				view.startAnimation(translate);
 			}
 		}
-
 	}
 
 	@TargetApi(Build.VERSION_CODES.HONEYCOMB)
@@ -435,26 +432,38 @@ public class DragReorderGridView extends GridView {
 	}
 
 	private void updateDraggingPosition(int newPosition) {
-		Log.e("xxx", "update newPosition " + newPosition + " old " + mDraggingPosition);
-		if (mDraggingPosition != INVALID_POSITION) {
-			View origDraggingCell = findViewByPosition(mDraggingPosition);
-			if (origDraggingCell != null) {
-				Log.e("xxx", "visible " + mDraggingPosition);
-				origDraggingCell.setVisibility(VISIBLE);
-			}
-		}
-
+		setCellDragging(mDraggingPosition, false);
 		mDraggingPosition = newPosition;
-
-		View newDraggingCell = findViewByPosition(mDraggingPosition);
-		if (newDraggingCell != null) {
-			Log.e("xxx", "invisible " + mDraggingPosition);
-			newDraggingCell.setVisibility(INVISIBLE);
-		}
+		setCellDragging(mDraggingPosition, true);
 	}
 
 	private void updateEditingPosition(int newPosition) {
+		setCellEditing(mEditingPosition, false);
 		mEditingPosition = newPosition;
+		setCellEditing(mEditingPosition, true);
+	}
+
+	private void setCellEditing(int position, boolean isEditing) {
+		View editingCell = findViewByPosition(position);
+		if (editingCell == null || !(editingCell instanceof ViewGroup)) {
+			return;
+		}
+
+		View actionView = ((ViewGroup) editingCell).findViewById(mEditActionViewId);
+		if (actionView == null) {
+			return;
+		}
+
+		actionView.setVisibility(isEditing ? VISIBLE : INVISIBLE);
+		actionView.setOnClickListener(isEditing ? mEditActionOnClickListener : null);
+	}
+
+	private void setCellDragging(int position, boolean isDragging) {
+		View cell = findViewByPosition(position);
+		if (cell == null) {
+			return;
+		}
+		cell.setVisibility(isDragging ? INVISIBLE : VISIBLE);
 	}
 
 	private void finishDrag() {
@@ -470,15 +479,15 @@ public class DragReorderGridView extends GridView {
 				return;
 			}
 
-			View mobileView = findViewByPosition(mDraggingPosition);
+			View draggingView = findViewByPosition(mDraggingPosition);
 			TranslateAnimation translate = new TranslateAnimation(Animation.ABSOLUTE, mHoverViewBounds.left
-					- mobileView.getLeft(), Animation.ABSOLUTE, 0, Animation.ABSOLUTE, mHoverViewBounds.top
-					- mobileView.getTop(), Animation.ABSOLUTE, 0);
+					- draggingView.getLeft(), Animation.ABSOLUTE, 0, Animation.ABSOLUTE, mHoverViewBounds.top
+					- draggingView.getTop(), Animation.ABSOLUTE, 0);
 			translate.setDuration(ANIMATION_DURATION);
 			translate.setFillEnabled(true);
 			translate.setFillAfter(true);
-			mobileView.clearAnimation();
-			mobileView.startAnimation(translate);
+			draggingView.clearAnimation();
+			draggingView.startAnimation(translate);
 			translate.setAnimationListener(new AnimationListener() {
 
 				@Override
@@ -505,6 +514,33 @@ public class DragReorderGridView extends GridView {
 		}
 
 		stopDrag();
+	}
+
+	private boolean mIsMobileScrolling = false;
+
+	private void handleScroll() {
+		mIsMobileScrolling = handleScroll(mHoverViewBounds);
+	}
+
+	private boolean handleScroll(Rect r) {
+		int offset = computeVerticalScrollOffset();
+		int height = getHeight();
+		int extent = computeVerticalScrollExtent();
+		int range = computeVerticalScrollRange();
+		int hoverViewTop = r.top;
+		int hoverHeight = r.height();
+
+		if (hoverViewTop <= 0 && offset > 0) {
+			smoothScrollBy(-mGridViewScrollStep, 0);
+			return true;
+		}
+
+		if (hoverViewTop + hoverHeight >= height && (offset + extent) < range) {
+			smoothScrollBy(mGridViewScrollStep, 0);
+			return true;
+		}
+
+		return false;
 	}
 
 	private boolean mIsWaitingForScrollFinish = false;
