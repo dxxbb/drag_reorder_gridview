@@ -89,11 +89,11 @@ public class DragReorderGridView extends GridView {
 
 			@Override
 			public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
-				notifyLongClicked();
-
 				if (!isReorderable(position)) {
 					return false;
 				}
+				
+				notifyLongClicked();
 
 				if (mEditModeEnabled) {
 					quitEditMode();
