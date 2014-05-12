@@ -485,7 +485,7 @@ public class DragReorderGridView extends GridView {
 					- draggingView.getTop(), Animation.ABSOLUTE, 0);
 			translate.setDuration(ANIMATION_DURATION);
 			translate.setFillEnabled(true);
-			translate.setFillAfter(true);
+			translate.setFillAfter(false);
 			draggingView.clearAnimation();
 			draggingView.startAnimation(translate);
 			translate.setAnimationListener(new AnimationListener() {
